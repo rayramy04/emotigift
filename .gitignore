@@ -73,6 +73,14 @@ Thumbs.db
 # Serena
 .serena/
 
+# Local AI assistant settings
+.agents/
+.claude/
+.codex/
+.cursor/
+.grok/
+.windsurf/
+
 # Logs
 logs/
 *.log
@@ -101,6 +109,5 @@ dist
 .env.development.local
 .env.test.local
 .env.production.local
-.vercel
+.vercel/
 .Rhistory
-.grok/
