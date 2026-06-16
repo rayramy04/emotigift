@@ -6,9 +6,66 @@ import { ResultDisplay } from './components/ResultDisplay';
 import { AnalysisResult } from './types';
 import { BUDGET_CONFIG, UI_CONFIG, API_CONFIG, MESSAGES } from './constants/app';
 
+type AnalysisType = 'reddit' | 'line' | 'whatsapp';
+interface ChatRequestData {
+  chat_content: string;
+  min_budget: number;
+  max_budget: number;
+  relationship: string | null;
+  gender: string | null;
+  age: string | null;
+  occasion: string | null;
+  additional_info: string | null;
+}
+
+type SafeChatRequestLog = Omit<ChatRequestData, 'chat_content'> & {
+  chat_content_length: number;
+};
+
+interface ProgressTimers {
+  progressInterval: NodeJS.Timeout;
+  stepTimers: NodeJS.Timeout[];
+}
+
+const getApiUrl = () => (
+  process.env.NODE_ENV === 'production'
+    ? process.env.REACT_APP_API_URL || 'https://emotigift-backend.onrender.com'
+    : API_CONFIG.BASE_URL.DEVELOPMENT
+);
+
+const normalizeErrorDetail = (detail: unknown): string => {
+  if (!detail) return '';
+
+  if (typeof detail === 'object') {
+    if (Array.isArray(detail)) {
+      return detail.map(item =>
+        typeof item === 'object' && item !== null
+          ? (item as { msg?: string }).msg || JSON.stringify(item)
+          : String(item)
+      ).join('\n');
+    }
+
+    return (
+      (detail as { msg?: string; message?: string }).msg ||
+      (detail as { msg?: string; message?: string }).message ||
+      JSON.stringify(detail)
+    );
+  }
+
+  return String(detail);
+};
+
+const toSafeChatRequestLog = (requestData: ChatRequestData): SafeChatRequestLog => {
+  const { chat_content, ...safeRequestData } = requestData;
+  return {
+    ...safeRequestData,
+    chat_content_length: chat_content.length
+  };
+};
+
 export default function App() {
   // State management
-  const [analysisType, setAnalysisType] = useState<'reddit' | 'line' | 'whatsapp'>('reddit');
+  const [analysisType, setAnalysisType] = useState<AnalysisType>('reddit');
   const [redditId, setRedditId] = useState('');
   const [lineChatContent, setLineChatContent] = useState('');
   const [lineChatFileName, setLineChatFileName] = useState('');
@@ -37,6 +94,80 @@ export default function App() {
   // チャットコンテンツの最新値を同期的に追跡するためのRef
   const lineChatContentRef = useRef('');
   const whatsappChatContentRef = useRef('');
+
+  const buildChatRequestData = useCallback((chatContent: string): ChatRequestData => ({
+    chat_content: chatContent,
+    min_budget: parseInt(minBudget) || 0,
+    max_budget: parseInt(maxBudget) || 0,
+    relationship: relationship || null,
+    gender: gender || null,
+    age: age || null,
+    occasion: occasion || null,
+    additional_info: additionalInfo.trim() || null
+  }), [minBudget, maxBudget, relationship, gender, age, occasion, additionalInfo]);
+
+  const appendOptionalAnalysisParams = useCallback((params: URLSearchParams) => {
+    const minBudgetNum = parseInt(minBudget) || 0;
+    const maxBudgetNum = parseInt(maxBudget) || 0;
+
+    if (minBudgetNum > 0) {
+      params.append('min_budget', minBudgetNum.toString());
+    }
+
+    if (maxBudgetNum > 0) {
+      params.append('max_budget', maxBudgetNum.toString());
+    }
+
+    if (relationship) params.append('relationship', relationship);
+    if (gender) params.append('gender', gender);
+    if (age) params.append('age', age);
+    if (occasion) params.append('occasion', occasion);
+    if (additionalInfo.trim()) params.append('additional_info', additionalInfo.trim());
+  }, [minBudget, maxBudget, relationship, gender, age, occasion, additionalInfo]);
+
+  const startProgressTimers = useCallback((type: AnalysisType): ProgressTimers => {
+    const progressInterval = setInterval(() => {
+      setProgress(prev => Math.min(prev + 5, 90));
+    }, UI_CONFIG.TIMEOUTS.PROGRESS_ANIMATION_DELAY);
+
+    const stepTimers: NodeJS.Timeout[] = [];
+
+    if (type === 'reddit') {
+      setCurrentStep(MESSAGES.STEPS.REDDIT_SEARCH);
+      stepTimers.push(setTimeout(() => {
+        setCurrentStep(MESSAGES.STEPS.POSTS_ANALYSIS);
+      }, UI_CONFIG.TIMEOUTS.STEP_ANIMATION_DELAY));
+    } else if (type === 'line') {
+      setCurrentStep(MESSAGES.STEPS.LINE_ANALYSIS);
+      stepTimers.push(setTimeout(() => {
+        setCurrentStep(MESSAGES.STEPS.CONTENT_ANALYSIS);
+      }, UI_CONFIG.TIMEOUTS.STEP_ANIMATION_DELAY));
+    } else {
+      setCurrentStep(MESSAGES.STEPS.WHATSAPP_ANALYSIS);
+      stepTimers.push(setTimeout(() => {
+        setCurrentStep(MESSAGES.STEPS.CONTENT_ANALYSIS);
+      }, UI_CONFIG.TIMEOUTS.STEP_ANIMATION_DELAY));
+    }
+
+    stepTimers.push(
+      setTimeout(() => {
+        setCurrentStep(MESSAGES.STEPS.AI_ANALYSIS);
+      }, 3000),
+      setTimeout(() => {
+        setCurrentStep(MESSAGES.STEPS.GIFT_SELECTION);
+      }, 4500),
+      setTimeout(() => {
+        setCurrentStep(MESSAGES.STEPS.FINAL_ADJUSTMENT);
+      }, UI_CONFIG.TIMEOUTS.FINAL_STEP_DELAY)
+    );
+
+    return { progressInterval, stepTimers };
+  }, []);
+
+  const clearProgressTimers = useCallback((timers: ProgressTimers) => {
+    clearInterval(timers.progressInterval);
+    timers.stepTimers.forEach(timer => clearTimeout(timer));
+  }, []);
 
   // 予算のバリデーション
   const validateBudget = useCallback((min: string, max: string) => {
@@ -139,6 +270,110 @@ export default function App() {
     return null;
   }, [loading, analysisType, redditId, lineChatContent, whatsappChatContent, budgetError, minBudget, maxBudget]);
 
+  const requestAnalysis = useCallback(async (type: AnalysisType, chatContentOverride?: string): Promise<AnalysisResult> => {
+    if (type === 'reddit') {
+      const params = new URLSearchParams();
+      params.append('reddit_id', redditId);
+      appendOptionalAnalysisParams(params);
+
+      const response = await axios.get(`${getApiUrl()}/analyze?${params.toString()}`, {
+        signal: abortControllerRef.current?.signal
+      });
+      return response.data;
+    }
+
+    const chatContent = chatContentOverride ?? (type === 'line' ? lineChatContent : whatsappChatContent);
+    const requestData = buildChatRequestData(chatContent);
+    const endpoint = type === 'line' ? '/analyze-line' : '/analyze-whatsapp';
+
+    if (type === 'line') {
+      console.log('LINE Request Data:', JSON.stringify(toSafeChatRequestLog(requestData), null, 2));
+    } else {
+      console.log('WhatsApp Request Data:', JSON.stringify(toSafeChatRequestLog(requestData), null, 2));
+    }
+
+    const response = await axios.post(`${getApiUrl()}${endpoint}`, requestData, {
+      signal: abortControllerRef.current?.signal
+    });
+    return response.data;
+  }, [redditId, appendOptionalAnalysisParams, buildChatRequestData, lineChatContent, whatsappChatContent]);
+
+  const handleAnalysisError = useCallback((err: any, type: AnalysisType, suppressTargetSelection = false) => {
+    console.error('Error details:', err?.message || err);
+    console.error('Error response:', JSON.stringify(err?.response?.data, null, 2));
+    console.error('Error status:', err?.response?.status);
+    console.error('Full error object:', err);
+
+    if (err.name === 'AbortError' || err.code === 'ERR_CANCELED') {
+      return;
+    }
+
+    const status = err.response?.status;
+    const detail = normalizeErrorDetail(err.response?.data?.detail);
+
+    if (status === 404) {
+      setError(`🔍 ${detail}\n\n確認事項：\n• ユーザー名のスペルミスがないか\n• そのユーザーが実際に存在するか\n• 投稿履歴があるアクティブなアカウントか`);
+    } else if (status === 403) {
+      setError(`🔒 ${detail}\n\n対処法：\n• 別の公開アカウントを試してみてください\n• プライベート設定のアカウントは分析できません`);
+    } else if (status === 429) {
+      setError('⏰ API制限に達しました。\n\nしばらく時間をおいてから再度お試しください。');
+    } else if (status === 504) {
+      setError(`⏱️ ${detail}\n\n対処法：\n• ネットワーク接続を確認してください\n• 少し時間をおいてから再試行してください`);
+    } else if (status === 503) {
+      setError(`🔧 ${detail}\n\n対処法：\n• サービス側の一時的な問題です\n• 数分後に再度お試しください`);
+    } else if (detail && detail.startsWith('TARGET_SELECTION_REQUIRED:')) {
+      if (!targetPersonOptions && !suppressTargetSelection) {
+        const options = detail.replace('TARGET_SELECTION_REQUIRED:', '').split('|');
+        const platform = type === 'line' ? 'line' : 'whatsapp';
+        setTargetPersonOptions({ platform, options });
+        setError('');
+      } else if (suppressTargetSelection) {
+        setError('分析対象を特定できませんでした。チャット内容を確認してから再度お試しください。');
+      }
+    } else {
+      setError(detail || 'エラーが発生しました。しばらく時間をおいてから再度お試しください。');
+    }
+  }, [targetPersonOptions]);
+
+  const runAnalysis = useCallback(async (type: AnalysisType, chatContentOverride?: string, suppressTargetSelection = false) => {
+    abortControllerRef.current = new AbortController();
+
+    setLoading(true);
+    setError('');
+    setResult(null);
+    setProgress(0);
+    setCurrentStep('');
+
+    const progressTimers = startProgressTimers(type);
+    let completed = false;
+
+    try {
+      const data = await requestAnalysis(type, chatContentOverride);
+
+      clearProgressTimers(progressTimers);
+      completed = true;
+
+      setProgress(UI_CONFIG.PROGRESS.MAX_VALUE);
+      setCurrentStep(MESSAGES.ANALYSIS.COMPLETED);
+
+      setTimeout(() => {
+        setResult(data);
+      }, UI_CONFIG.TIMEOUTS.PROGRESS_ANIMATION_DELAY);
+    } catch (err: any) {
+      clearProgressTimers(progressTimers);
+      handleAnalysisError(err, type, suppressTargetSelection);
+    } finally {
+      setLoading(false);
+      setIsAutoSubmitting(false);
+      abortControllerRef.current = null;
+
+      if (!completed) {
+        setProgress(0);
+        setCurrentStep('');
+      }
+    }
+  }, [requestAnalysis, startProgressTimers, clearProgressTimers, handleAnalysisError]);
+
   // Handle target person selection
   const handlePersonSelection = useCallback(async (person: string) => {
     if (!targetPersonOptions) return;
@@ -169,98 +404,11 @@ ${currentContent}`;
     
     setTargetPersonOptions(null);
     setIsAutoSubmitting(true);
-    
-    // 更新されたコンテンツで直接API呼び出しを実行
-    setTimeout(async () => {
-      if (!loading) {
-        try {
-          setLoading(true);
-          setError('');
-          setResult(null);
-          setProgress(0);
-          setCurrentStep('');
 
-          // AbortControllerを作成
-          abortControllerRef.current = new AbortController();
-
-          // プログレスバーのアニメーション
-          let step1Timer: NodeJS.Timeout;
-          let step2Timer: NodeJS.Timeout;
-          let step3Timer: NodeJS.Timeout;
-          let step4Timer: NodeJS.Timeout;
-
-          const progressInterval = setInterval(() => {
-            setProgress(prev => Math.min(prev + 5, 90));
-          }, UI_CONFIG.TIMEOUTS.PROGRESS_ANIMATION_DELAY);
-
-          if (platform === 'line') {
-            setCurrentStep(MESSAGES.STEPS.LINE_ANALYSIS);
-            step1Timer = setTimeout(() => {
-              setCurrentStep(MESSAGES.STEPS.CONTENT_ANALYSIS);
-            }, UI_CONFIG.TIMEOUTS.STEP_ANIMATION_DELAY);
-          } else {
-            setCurrentStep(MESSAGES.STEPS.WHATSAPP_ANALYSIS);
-            step1Timer = setTimeout(() => {
-              setCurrentStep(MESSAGES.STEPS.CONTENT_ANALYSIS);
-            }, UI_CONFIG.TIMEOUTS.STEP_ANIMATION_DELAY);
-          }
-
-          step2Timer = setTimeout(() => {
-            setCurrentStep(MESSAGES.STEPS.AI_ANALYSIS);
-          }, 3000);
-
-          step3Timer = setTimeout(() => {
-      setCurrentStep(MESSAGES.STEPS.GIFT_SELECTION);
-    }, 4500);
-
-          step4Timer = setTimeout(() => {
-            setCurrentStep(MESSAGES.STEPS.FINAL_ADJUSTMENT);
-          }, UI_CONFIG.TIMEOUTS.FINAL_STEP_DELAY);
-
-          const apiUrl = process.env.NODE_ENV === 'production' 
-            ? process.env.REACT_APP_API_URL || 'https://emotigift-backend.onrender.com'
-            : API_CONFIG.BASE_URL.DEVELOPMENT;
-
-          const requestData = {
-            chat_content: updatedContent, // 確実に更新されたコンテンツを使用
-            min_budget: parseInt(minBudget) || 0,
-            max_budget: parseInt(maxBudget) || 0,
-            relationship: relationship || null,
-            gender: gender || null,
-            age: age || null,
-            occasion: occasion || null,
-            additional_info: additionalInfo.trim() || null
-          };
-
-          const endpoint = platform === 'line' ? '/analyze-line' : '/analyze-whatsapp';
-          const response = await axios.post(`${apiUrl}${endpoint}`, requestData, {
-            signal: abortControllerRef.current?.signal
-          });
-
-          // すべてのタイマーをクリア
-          clearInterval(progressInterval);
-          [step1Timer, step2Timer, step3Timer, step4Timer].forEach(timer => {
-            if (timer) clearTimeout(timer);
-          });
-
-          setProgress(UI_CONFIG.PROGRESS.MAX_VALUE);
-          setCurrentStep(MESSAGES.ANALYSIS.COMPLETED);
-
-          setTimeout(() => {
-            setResult(response.data);
-          }, UI_CONFIG.TIMEOUTS.PROGRESS_ANIMATION_DELAY);
-
-        } catch (error: any) {
-          console.error('Auto-analysis error:', error);
-          setError(error?.response?.data?.detail || '分析中にエラーが発生しました。');
-        } finally {
-          setLoading(false);
-          setIsAutoSubmitting(false);
-          abortControllerRef.current = null;
-        }
-      }
-    }, 50); // 50msに短縮
-  }, [targetPersonOptions, loading, minBudget, maxBudget, relationship, gender, age, occasion, additionalInfo]);
+    if (!loading) {
+      runAnalysis(platform, updatedContent, true);
+    }
+  }, [targetPersonOptions, loading, runAnalysis]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -297,204 +445,7 @@ ${currentContent}`;
       return;
     }
 
-    // AbortControllerを作成
-    abortControllerRef.current = new AbortController();
-    
-    setLoading(true);
-    setError('');
-    setResult(null);
-    setProgress(0);
-    setCurrentStep('');
-
-    // プログレスバーのアニメーション（高速化）
-    let step1Timer: NodeJS.Timeout;
-    let step2Timer: NodeJS.Timeout;
-    let step3Timer: NodeJS.Timeout;
-    let step4Timer: NodeJS.Timeout;
-
-    const progressInterval = setInterval(() => {
-      setProgress(prev => Math.min(prev + 5, 90)); // 90%まで高速化
-    }, UI_CONFIG.TIMEOUTS.PROGRESS_ANIMATION_DELAY); // 間隔短縮
-
-    if (analysisType === 'reddit') {
-      setCurrentStep(MESSAGES.STEPS.REDDIT_SEARCH);
-      step1Timer = setTimeout(() => {
-        setCurrentStep(MESSAGES.STEPS.POSTS_ANALYSIS);
-      }, UI_CONFIG.TIMEOUTS.STEP_ANIMATION_DELAY);
-    } else if (analysisType === 'line') {
-      setCurrentStep(MESSAGES.STEPS.LINE_ANALYSIS);
-      step1Timer = setTimeout(() => {
-        setCurrentStep(MESSAGES.STEPS.CONTENT_ANALYSIS);
-      }, UI_CONFIG.TIMEOUTS.STEP_ANIMATION_DELAY);
-    } else {
-      setCurrentStep(MESSAGES.STEPS.WHATSAPP_ANALYSIS);
-      step1Timer = setTimeout(() => {
-        setCurrentStep(MESSAGES.STEPS.CONTENT_ANALYSIS);
-      }, UI_CONFIG.TIMEOUTS.STEP_ANIMATION_DELAY);
-    }
-
-    step2Timer = setTimeout(() => {
-      setCurrentStep(MESSAGES.STEPS.AI_ANALYSIS);
-    }, 3000); // 短縮
-
-    step3Timer = setTimeout(() => {
-      setCurrentStep(MESSAGES.STEPS.GIFT_SELECTION);
-    }, 4500); // 短縮
-
-    step4Timer = setTimeout(() => {
-      setCurrentStep(MESSAGES.STEPS.FINAL_ADJUSTMENT);
-    }, UI_CONFIG.TIMEOUTS.FINAL_STEP_DELAY); // 短縮
-
-    try {
-      const apiUrl = process.env.NODE_ENV === 'production' 
-        ? process.env.REACT_APP_API_URL || 'https://emotigift-backend.onrender.com'
-        : API_CONFIG.BASE_URL.DEVELOPMENT;
-
-      let response: any;
-      
-      if (analysisType === 'reddit') {
-        const params = new URLSearchParams();
-        params.append('reddit_id', redditId);
-        
-        const minBudgetNum = parseInt(minBudget) || 0;
-        const maxBudgetNum = parseInt(maxBudget) || 0;
-        
-        if (minBudgetNum > 0) {
-          params.append('min_budget', minBudgetNum.toString());
-        }
-        
-        if (maxBudgetNum > 0) {
-          params.append('max_budget', maxBudgetNum.toString());
-        }
-        
-        if (relationship) params.append('relationship', relationship);
-        if (gender) params.append('gender', gender);
-        if (age) params.append('age', age);
-        if (occasion) params.append('occasion', occasion);
-        if (additionalInfo.trim()) params.append('additional_info', additionalInfo.trim());
-        
-        response = await axios.get(`${apiUrl}/analyze?${params.toString()}`, {
-          signal: abortControllerRef.current?.signal
-        });
-      } else if (analysisType === 'line') {
-        // LINE分析の場合はPOSTリクエスト
-        const requestData = {
-          chat_content: lineChatContent,
-          min_budget: parseInt(minBudget) || 0,
-          max_budget: parseInt(maxBudget) || 0,
-          relationship: relationship || null,
-          gender: gender || null,
-          age: age || null,
-          occasion: occasion || null,
-          additional_info: additionalInfo.trim() || null
-        };
-        
-        console.log('LINE Request Data:', JSON.stringify(requestData, null, 2));
-        
-        response = await axios.post(`${apiUrl}/analyze-line`, requestData, {
-          signal: abortControllerRef.current?.signal
-        });
-      } else {
-        // WhatsApp分析の場合はPOSTリクエスト
-        const requestData = {
-          chat_content: whatsappChatContent,
-          min_budget: parseInt(minBudget) || 0,
-          max_budget: parseInt(maxBudget) || 0,
-          relationship: relationship || null,
-          gender: gender || null,
-          age: age || null,
-          occasion: occasion || null,
-          additional_info: additionalInfo.trim() || null
-        };
-        
-        console.log('WhatsApp Request Data:', JSON.stringify(requestData, null, 2));
-        
-        response = await axios.post(`${apiUrl}/analyze-whatsapp`, requestData, {
-          signal: abortControllerRef.current?.signal
-        });
-      }
-      
-      // すべてのタイマーをクリア
-      clearInterval(progressInterval);
-      [step1Timer, step2Timer, step3Timer, step4Timer].forEach(timer => {
-        if (timer) clearTimeout(timer);
-      });
-      
-      setProgress(UI_CONFIG.PROGRESS.MAX_VALUE);
-      setCurrentStep(MESSAGES.ANALYSIS.COMPLETED);
-      
-      setTimeout(() => {
-        setResult(response.data);
-        // 分析対象行は削除しない（再分析時に必要）
-      }, UI_CONFIG.TIMEOUTS.PROGRESS_ANIMATION_DELAY);
-      
-    } catch (err: any) {
-      console.error('Error details:', err?.message || err);
-      console.error('Error response:', JSON.stringify(err?.response?.data, null, 2));
-      console.error('Error status:', err?.response?.status);
-      console.error('Full error object:', err);
-      
-      // すべてのタイマーをクリア
-      clearInterval(progressInterval);
-      [step1Timer, step2Timer, step3Timer, step4Timer].forEach(timer => {
-        if (timer) clearTimeout(timer);
-      });
-      
-      // 中止された場合の処理
-      if (err.name === 'AbortError' || err.code === 'ERR_CANCELED') {
-        // 中止の場合は何もしない（handleCancelAnalysisで処理済み）
-        return;
-      }
-      
-      // エラー種別に応じた詳細なメッセージ表示
-      const status = err.response?.status;
-      let detail = err.response?.data?.detail || '';
-      
-      // detailがオブジェクトの場合（バリデーションエラーなど）、文字列に変換
-      if (typeof detail === 'object') {
-        if (Array.isArray(detail)) {
-          // 配列の場合、各エラーメッセージを結合
-          detail = detail.map(item => 
-            typeof item === 'object' ? item.msg || JSON.stringify(item) : String(item)
-          ).join('\n');
-        } else {
-          // オブジェクトの場合、メッセージフィールドを探すか文字列化
-          detail = detail.msg || detail.message || JSON.stringify(detail);
-        }
-      }
-      
-      if (status === 404) {
-        setError(`🔍 ${detail}\n\n確認事項：\n• ユーザー名のスペルミスがないか\n• そのユーザーが実際に存在するか\n• 投稿履歴があるアクティブなアカウントか`);
-      } else if (status === 403) {
-        setError(`🔒 ${detail}\n\n対処法：\n• 別の公開アカウントを試してみてください\n• プライベート設定のアカウントは分析できません`);
-      } else if (status === 429) {
-        setError('⏰ API制限に達しました。\n\nしばらく時間をおいてから再度お試しください。');
-      } else if (status === 504) {
-        setError(`⏱️ ${detail}\n\n対処法：\n• ネットワーク接続を確認してください\n• 少し時間をおいてから再試行してください`);
-      } else if (status === 503) {
-        setError(`🔧 ${detail}\n\n対処法：\n• サービス側の一時的な問題です\n• 数分後に再度お試しください`);
-      } else if (detail && detail.startsWith('TARGET_SELECTION_REQUIRED:')) {
-        // ターゲット選択が必要な場合（重複表示を防ぐためのチェック）
-        if (!targetPersonOptions && !isAutoSubmitting) {
-          const options = detail.replace('TARGET_SELECTION_REQUIRED:', '').split('|');
-          const platform = analysisType === 'line' ? 'line' : 'whatsapp';
-          setTargetPersonOptions({ platform, options });
-          setError('');
-        }
-      } else {
-        setError(detail || 'エラーが発生しました。しばらく時間をおいてから再度お試しください。');
-      }
-    } finally {
-      setLoading(false);
-      setIsAutoSubmitting(false); // 自動実行フラグもリセット
-      // AbortControllerをクリーンアップ
-      abortControllerRef.current = null;
-      // 成功時はプログレスバーを保持し、エラー時のみリセット
-      if (!result) {
-        setProgress(0);
-        setCurrentStep('');
-      }
-    }
+    await runAnalysis(analysisType);
   };
 
   return (
