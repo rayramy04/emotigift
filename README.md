@@ -54,14 +54,14 @@ A combination of **Emotion** and **Gift** - embodying our vision of using AI to 
 
 #### Mac/Linux:
 ```bash
-git clone https://github.com/Pepper161/supporterz-hackathon.git
+git clone https://github.com/Pepper161/supporterz-hackathon.git emotigift
 cd emotigift
 chmod +x scripts/*.sh && ./scripts/setup.sh
 ```
 
 #### Windows:
 ```cmd
-git clone https://github.com/Pepper161/supporterz-hackathon.git
+git clone https://github.com/Pepper161/supporterz-hackathon.git emotigift
 cd emotigift
 scripts\setup.bat
 ```
