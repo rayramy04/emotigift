@@ -54,7 +54,13 @@ app.add_middleware(
 )
 
 reddit_service = UnifiedRedditService()
-gift_service = GiftService()
+gift_service = None
+
+def get_gift_service() -> GiftService:
+    global gift_service
+    if gift_service is None:
+        gift_service = GiftService()
+    return gift_service
 
 @app.get("/")
 async def root():
@@ -115,7 +121,7 @@ async def analyze_reddit_user(
                 detail=f"Reddit user '{reddit_id}' の投稿データを取得できませんでした。ユーザー名を確認するか、別のアカウントをお試しください。"
             )
         
-        recommendations = await gift_service.generate_recommendations(
+        recommendations = await get_gift_service().generate_recommendations(
             reddit_posts, reddit_id, additional_info_dict
         )
         
@@ -144,7 +150,7 @@ async def _process_chat_analysis(parsed_chat: str, target_person: str, additiona
         Gift recommendation results
     """
     reddit_posts = [{"body": parsed_chat, "title": f"{platform} Chat with {target_person}"}]
-    return await gift_service.generate_recommendations(
+    return await get_gift_service().generate_recommendations(
         reddit_posts, target_person, additional_info_dict
     )
 
@@ -328,7 +334,7 @@ def parse_line_chat(chat_content: str) -> tuple[str, str]:
         time_patterns = [
             r'^\d{1,2}:\d{2}\t(.+?)\t(.+)$',  # スマホ形式（タブ区切り）
             r'^\d{1,2}:\d{2}\s+(.+?)\s+(.+)$',  # PC形式（スペース区切り）
-            r'^\d{4}/\d{2}/\d/d\s+\d{1,2}:\d{2}\t(.+?)\t(.+)$',  # 日付付き形式
+            r'^\d{4}/\d{2}/\d{2}\s+\d{1,2}:\d{2}\t(.+?)\t(.+)$',  # 日付付き形式
             r'^(.+?)\s+\d{1,2}:\d{2}\s+(.+)$',  # 名前-時刻-メッセージ形式
             # Generic pattern removed to prevent misrecognition
             # r'^(.+?)[\t\s]+(.+)$'  # 汎用的な名前-メッセージ形式（最後の手段）
@@ -408,8 +414,8 @@ def parse_line_chat(chat_content: str) -> tuple[str, str]:
     logger.debug("Parsed messages count: %s", len(parsed_messages))
     if len(speakers) > 2:
         logger.warning("Detected %s LINE speakers: %s", len(speakers), list(speakers))
-        logger.debug("First parsed LINE messages: %s", parsed_messages[:10])
-        logger.debug("Original LINE lines processed: %s", [line.strip() for line in lines[:20]])
+        logger.debug("First parsed LINE message count: %s", min(len(parsed_messages), 10))
+        logger.debug("Original LINE line sample count: %s", min(len(lines), 20))
     
     # Additional check for abnormally high number of speakers
     if len(speakers) > 5:
@@ -445,8 +451,8 @@ def parse_whatsapp_chat(chat_content: str) -> tuple[str, str]:
             
         # Detect WhatsApp time patterns
         time_patterns = [
-            r'^\[[\d/,:\s\u202f\u00a0APM]+\]\s*([^~]+?):\s*(.+)$',  # PC形式
-            r'^[\d/,:\s\u202f\u00a0-]+\s*-\s*([^~]+?):\s*(.+)$',   # スマホ形式
+            r'^\[[\d/,:\s\u202f\u00a0APMapm]+\]\s*([^~]+?):\s*(.+)$',  # PC形式
+            r'^[\d/,:\s\u202f\u00a0APMapm.-]+-\s*([^~]+?):\s*(.+)$',   # スマホ形式
         ]
         
         message_found = False

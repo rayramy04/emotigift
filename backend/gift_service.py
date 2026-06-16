@@ -18,16 +18,15 @@ from error_handlers import (
 
 load_dotenv()
 
-api_key = os.getenv("GEMINI_API_KEY")
-if not api_key:
-    raise ValueError("GEMINI_API_KEY environment variable is not set. Please check your .env file.")
-
-genai.configure(api_key=api_key)
-
 logger = logging.getLogger(__name__)
 
 class GiftService:
     def __init__(self):
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise ValueError("GEMINI_API_KEY environment variable is not set. Please check your .env file.")
+
+        genai.configure(api_key=api_key)
         self.keyword_optimizer = KeywordOptimizer()
         self.model = genai.GenerativeModel('gemini-1.5-flash')
         self.rate_limit_delay = float(os.getenv("GEMINI_RATE_LIMIT_DELAY", "0"))
