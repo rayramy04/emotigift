@@ -1,0 +1,203 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+body {
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
+    'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
+    sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: linear-gradient(135deg, #f5f3ff 0%, #fdf2f8 100%);
+  min-height: 100vh;
+}
+
+code {
+  font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
+    monospace;
+}
+
+/* Heart Progress Styles */
+.heart-progress-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  margin: 1rem 0;
+  position: relative;
+}
+
+.heart-progress-wrapper {
+  position: relative;
+  width: 180px;
+  height: 220px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-bottom: 40px;
+}
+
+.sparkles-container {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.sparkle {
+  position: absolute;
+  pointer-events: none;
+}
+
+.heart-main {
+  position: relative;
+  width: 100px;
+  height: 100px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: visible;
+}
+
+.heart-background {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+}
+
+.heart-base {
+  filter: brightness(0.3);
+}
+
+.heart-progress {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 2;
+  overflow: hidden;
+}
+
+.heart-fill {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  filter: hue-rotate(20deg) saturate(1.2) brightness(1.1);
+}
+
+.progress-percentage {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-size: 1.125rem;
+  font-weight: 700;
+  color: rgb(31 41 55);
+  text-shadow: 0 2px 4px rgba(255, 255, 255, 0.8);
+  z-index: 3;
+}
+
+.progress-step-text {
+  position: absolute;
+  bottom: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  text-align: center;
+  font-size: 0.95rem;
+  font-weight: 600;
+  color: rgb(55 65 81);
+  white-space: normal;
+  width: 90%;
+  line-height: 1.3;
+}
+
+.floating-hearts {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.floating-heart {
+  position: absolute;
+  bottom: 60%;
+}
+
+/* CSS Animations - framer-motion replacement */
+@keyframes sparkle {
+  0%, 100% {
+    transform: scale(0) rotate(0deg);
+    opacity: 0;
+  }
+  50% {
+    transform: scale(1) rotate(180deg);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(0) rotate(360deg);
+    opacity: 0;
+  }
+}
+
+@keyframes pulse-scale {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+}
+
+@keyframes text-pulse {
+  0%, 100% {
+    opacity: 0.8;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes float-heart {
+  0% {
+    transform: translateY(0px) scale(0.5);
+    opacity: 0;
+  }
+  33% {
+    transform: translateY(-20px) scale(1);
+    opacity: 1;
+  }
+  66% {
+    transform: translateY(-40px) scale(1);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-60px) scale(0.5);
+    opacity: 0;
+  }
+}
+
+.animate-sparkle {
+  animation: sparkle 2s ease-in-out infinite;
+}
+
+.animate-pulse-scale {
+  animation: pulse-scale 1.5s ease-in-out infinite;
+}
+
+.animate-text-pulse {
+  animation: text-pulse 1.5s ease-in-out infinite;
+}
+
+.animate-float-heart {
+  animation: float-heart 3s ease-in-out infinite;
+}
