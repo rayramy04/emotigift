@@ -5,15 +5,35 @@ echo ""
 
 # Python のバージョンチェック
 if ! command -v python3 &> /dev/null && ! command -v python &> /dev/null; then
-    echo "❌ Python が見つかりません。Python 3.8以上をインストールしてください。"
+    echo "❌ Python が見つかりません。Python 3.10以上をインストールしてください。"
     echo "   https://www.python.org/downloads/"
+    exit 1
+fi
+
+PYTHON_CMD=""
+for candidate in python3 python; do
+    if command -v "$candidate" &> /dev/null && "$candidate" -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)"; then
+        PYTHON_CMD="$candidate"
+        break
+    fi
+done
+
+if [ -z "$PYTHON_CMD" ]; then
+    echo "❌ Python 3.10以上が必要です。"
+    python3 --version 2>/dev/null || python --version 2>/dev/null
     exit 1
 fi
 
 # Node.js のバージョンチェック
 if ! command -v node &> /dev/null; then
-    echo "❌ Node.js が見つかりません。Node.js 14以上をインストールしてください。"
+    echo "❌ Node.js が見つかりません。Node.js 18以上をインストールしてください。"
     echo "   https://nodejs.org/"
+    exit 1
+fi
+
+if ! node -e "process.exit(Number(process.versions.node.split('.')[0]) >= 18 ? 0 : 1)"; then
+    echo "❌ Node.js 18以上が必要です。"
+    echo "   現在のバージョン: $(node --version)"
     exit 1
 fi
 
@@ -25,7 +45,7 @@ echo "🔧 バックエンドをセットアップ中..."
 cd backend
 
 echo "  - 仮想環境を作成中..."
-python3 -m venv venv 2>/dev/null || python -m venv venv
+"$PYTHON_CMD" -m venv venv
 if [ $? -ne 0 ]; then
     echo "❌ 仮想環境の作成に失敗しました"
     exit 1

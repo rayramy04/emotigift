@@ -5,8 +5,16 @@ echo.
 :: Python のバージョンチェック
 python --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo ❌ Python が見つかりません。Python 3.8以上をインストールしてください。
+    echo ❌ Python が見つかりません。Python 3.10以上をインストールしてください。
     echo    https://www.python.org/downloads/
+    pause
+    exit /b 1
+)
+
+python -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 10) else 1)" >nul 2>&1
+if %errorlevel% neq 0 (
+    echo ❌ Python 3.10以上が必要です。
+    python --version
     pause
     exit /b 1
 )
@@ -14,8 +22,16 @@ if %errorlevel% neq 0 (
 :: Node.js のバージョンチェック  
 node --version >nul 2>&1
 if %errorlevel% neq 0 (
-    echo ❌ Node.js が見つかりません。Node.js 14以上をインストールしてください。
+    echo ❌ Node.js が見つかりません。Node.js 18以上をインストールしてください。
     echo    https://nodejs.org/
+    pause
+    exit /b 1
+)
+
+node -e "process.exit(Number(process.versions.node.split('.')[0]) >= 18 ? 0 : 1)" >nul 2>&1
+if %errorlevel% neq 0 (
+    echo ❌ Node.js 18以上が必要です。
+    node --version
     pause
     exit /b 1
 )

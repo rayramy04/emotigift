@@ -9,13 +9,16 @@ import os
 from dotenv import load_dotenv
 from datetime import datetime
 import re
+import logging
 
 from reddit_unified import UnifiedRedditService
 from gift_service import GiftService
 
 load_dotenv()
 
-class LineChatAnalysisRequest(BaseModel):
+logger = logging.getLogger(__name__)
+
+class ChatAnalysisRequest(BaseModel):
     chat_content: str
     min_budget: Optional[int] = None
     max_budget: Optional[int] = None
@@ -25,15 +28,8 @@ class LineChatAnalysisRequest(BaseModel):
     occasion: Optional[str] = None
     additional_info: Optional[str] = None
 
-class WhatsAppChatAnalysisRequest(BaseModel):
-    chat_content: str
-    min_budget: Optional[int] = None
-    max_budget: Optional[int] = None
-    relationship: Optional[str] = None
-    gender: Optional[str] = None
-    age: Optional[str] = None
-    occasion: Optional[str] = None
-    additional_info: Optional[str] = None
+LineChatAnalysisRequest = ChatAnalysisRequest
+WhatsAppChatAnalysisRequest = ChatAnalysisRequest
 
 app = FastAPI()
 
@@ -128,7 +124,7 @@ async def analyze_reddit_user(
     except HTTPException:
         raise
     except Exception as e:
-        print(f"Unexpected error for user {reddit_id}: {e}")
+        logger.exception("Unexpected error for user %s", reddit_id)
         raise HTTPException(
             status_code=500,
             detail="プレゼント分析中に問題が発生しました。しばらく時間をおいてから再度お試しください。"
@@ -189,10 +185,16 @@ def _handle_chat_error(error: ValueError, chat_type: str) -> HTTPException:
         return HTTPException(status_code=400, detail=error_message)
     
     elif "グループ" in error_message:
-        hint_message = (
-            "• 必ず一対一の個人トークファイルをアップロードしてください\n"
-            "• グループトークには対応していません"
-        )
+        if chat_type == "WhatsApp":
+            hint_message = (
+                "• 必ず一対一のプライベートチャットファイルをアップロードしてください\n"
+                "• グループチャットには対応していません"
+            )
+        else:
+            hint_message = (
+                "• 必ず一対一の個人トークファイルをアップロードしてください\n"
+                "• グループトークには対応していません"
+            )
         return HTTPException(status_code=400, detail=f"📄 {error_message}\n\n💡 ヒント:\n{hint_message}")
     
     elif "特定できませんでした" in error_message:
@@ -333,7 +335,7 @@ def parse_line_chat(chat_content: str) -> tuple[str, str]:
         ]
         
         message_found = False
-        for i, pattern in enumerate(time_patterns):
+        for pattern in time_patterns:
             match = re.match(pattern, line)
             if match:
                 sender = match.group(1).strip()
@@ -401,23 +403,17 @@ def parse_line_chat(chat_content: str) -> tuple[str, str]:
             if parsed_messages:
                 parsed_messages[-1] += " " + line
     
-    # Debug information output
-    print(f"DEBUG: LINE speakers detected: {speakers}")
-    print(f"DEBUG: Number of speakers: {len(speakers)}")
-    print(f"DEBUG: Parsed messages count: {len(parsed_messages)}")
+    logger.debug("LINE speakers detected: %s", speakers)
+    logger.debug("Number of speakers: %s", len(speakers))
+    logger.debug("Parsed messages count: %s", len(parsed_messages))
     if len(speakers) > 2:
-        print(f"WARNING: Detected {len(speakers)} speakers: {list(speakers)}")
-        print("DEBUG: First few parsed messages:")
-        for i, msg in enumerate(parsed_messages[:10]):
-            print(f"  {i+1}: {msg}")
-        print("DEBUG: Original lines that were processed:")
-        for i, line in enumerate(lines[:20]):
-            print(f"  Line {i+1}: '{line.strip()}'")
+        logger.warning("Detected %s LINE speakers: %s", len(speakers), list(speakers))
+        logger.debug("First parsed LINE messages: %s", parsed_messages[:10])
+        logger.debug("Original LINE lines processed: %s", [line.strip() for line in lines[:20]])
     
     # Additional check for abnormally high number of speakers
     if len(speakers) > 5:
-        print(f"ERROR: Too many speakers detected ({len(speakers)}). This suggests parsing errors.")
-        print(f"Speakers: {list(speakers)}")
+        logger.error("Too many LINE speakers detected (%s). Speakers: %s", len(speakers), list(speakers))
         # Tighten parser for obvious parsing errors
         speakers = {s for s in speakers if len(s) >= 2 and len(s) <= 20 and not s.isdigit()}
     
@@ -519,6 +515,38 @@ def parse_whatsapp_chat(chat_content: str) -> tuple[str, str]:
     
     return target_person, analysis_text
 
+async def _analyze_chat(request: ChatAnalysisRequest, parser, platform: str):
+    if not request.chat_content.strip():
+        raise HTTPException(status_code=400, detail="チャット履歴が必要です")
+    
+    additional_info_dict = _build_additional_info_dict(request)
+    
+    try:
+        target_person, parsed_chat = parser(request.chat_content)
+        
+        if not parsed_chat.strip():
+            raise HTTPException(
+                status_code=400,
+                detail="有効なチャット履歴を解析できませんでした。ファイル形式を確認してください。"
+            )
+        
+        recommendations = await _process_chat_analysis(
+            parsed_chat, target_person, additional_info_dict, platform
+        )
+        
+        return recommendations
+        
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise _handle_chat_error(e, platform)
+    except Exception as e:
+        logger.exception("Unexpected error during %s chat analysis", platform)
+        raise HTTPException(
+            status_code=500,
+            detail="チャット分析中に問題が発生しました。しばらく時間をおいてから再度お試しください。"
+        )
+
 @app.post("/analyze-line")
 async def analyze_line_chat(request: LineChatAnalysisRequest):
     """
@@ -530,44 +558,7 @@ async def analyze_line_chat(request: LineChatAnalysisRequest):
     Returns:
         User profile analysis and gift recommendations
     """
-    if not request.chat_content.strip():
-        raise HTTPException(status_code=400, detail="チャット履歴が必要です")
-    
-    additional_info_dict = _build_additional_info_dict(request)
-    
-    try:
-        target_person, parsed_chat = parse_line_chat(request.chat_content)
-        
-        if not parsed_chat.strip():
-            raise HTTPException(
-                status_code=400,
-                detail="有効なチャット履歴を解析できませんでした。ファイル形式を確認してください。"
-            )
-        
-        recommendations = await _process_chat_analysis(
-            parsed_chat, target_person, additional_info_dict, "LINE"
-        )
-        
-        return recommendations
-        
-    except HTTPException:
-        raise
-    except ValueError as e:
-        error_message = str(e)
-        if "TARGET_SELECTION_REQUIRED:" in error_message:
-            raise HTTPException(status_code=400, detail=error_message)
-        elif "グループトーク" in error_message:
-            raise HTTPException(status_code=400, detail="📄 " + error_message + "\n\n💡 ヒント:\n• 必ず一対一の個人トークファイルをアップロードしてください\n• グループトークには対応していません")
-        elif "特定できませんでした" in error_message:
-            raise HTTPException(status_code=400, detail="📄 " + error_message + "\n\n💡 チャット内容の確認:\n• 十分な会話内容があることを確認してください\n• 一対一のチャットファイルかどうか確認してください\n• ファイルが正しくアップロードされているか確認してください")
-        else:
-            raise HTTPException(status_code=400, detail=error_message)
-    except Exception as e:
-        print(f"Unexpected error during LINE chat analysis: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail="チャット分析中に問題が発生しました。しばらく時間をおいてから再度お試しください。"
-        )
+    return await _analyze_chat(request, parse_line_chat, "LINE")
 
 @app.post("/analyze-whatsapp")
 async def analyze_whatsapp_chat(request: WhatsAppChatAnalysisRequest):
@@ -580,45 +571,7 @@ async def analyze_whatsapp_chat(request: WhatsAppChatAnalysisRequest):
     Returns:
         User profile analysis and gift recommendations
     """
-    if not request.chat_content.strip():
-        raise HTTPException(status_code=400, detail="チャット履歴が必要です")
-    
-    additional_info_dict = _build_additional_info_dict(request)
-    
-    try:
-        # 1. WhatsAppチャット履歴を解析
-        target_person, parsed_chat = parse_whatsapp_chat(request.chat_content)
-        
-        if not parsed_chat.strip():
-            raise HTTPException(
-                status_code=400,
-                detail="有効なチャット履歴を解析できませんでした。ファイル形式を確認してください。"
-            )
-        
-        recommendations = await _process_chat_analysis(
-            parsed_chat, target_person, additional_info_dict, "WhatsApp"
-        )
-        
-        return recommendations
-        
-    except HTTPException:
-        raise
-    except ValueError as e:
-        error_message = str(e)
-        if "TARGET_SELECTION_REQUIRED:" in error_message:
-            raise HTTPException(status_code=400, detail=error_message)
-        elif "グループチャット" in error_message:
-            raise HTTPException(status_code=400, detail="📄 " + error_message + "\n\n💡 ヒント:\n• 必ず一対一のプライベートチャットファイルをアップロードしてください\n• グループチャットには対応していません")
-        elif "特定できませんでした" in error_message:
-            raise HTTPException(status_code=400, detail="📄 " + error_message + "\n\n💡 チャット内容の確認:\n• 十分な会話内容があることを確認してください\n• 一対一のチャットファイルかどうか確認してください\n• ファイルが正しくアップロードされているか確認してください")
-        else:
-            raise HTTPException(status_code=400, detail=error_message)
-    except Exception as e:
-        print(f"Unexpected error during WhatsApp chat analysis: {e}")
-        raise HTTPException(
-            status_code=500,
-            detail="チャット分析中に問題が発生しました。しばらく時間をおいてから再度お試しください。"
-        )
+    return await _analyze_chat(request, parse_whatsapp_chat, "WhatsApp")
 
 if __name__ == "__main__":
     import uvicorn

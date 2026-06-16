@@ -39,7 +39,7 @@ EmotiGiftは、**SNS投稿・チャット履歴をAI分析してパーソナラ�
 | 分野 | 技術 |
 |------|------|
 | **フロントエンド** | React 19.1.0 + TypeScript 4.9.5 |
-| **バックエンド** | FastAPI + Python 3.8+ |
+| **バックエンド** | FastAPI + Python 3.10+ |
 | **AI** | Google Gemini 1.5 Flash |
 | **スタイリング** | CSS + Tailwind CSS |
 
@@ -47,7 +47,7 @@ EmotiGiftは、**SNS投稿・チャット履歴をAI分析してパーソナラ�
 
 ### 必要要件
 - Node.js 18+ と npm 8+
-- Python 3.8+
+- Python 3.10+
 - Google Gemini APIキー（[こちらから取得](https://makersuite.google.com/app/apikey)）
 
 ### インストール

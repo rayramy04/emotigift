@@ -4,6 +4,7 @@ Gift recommendation processing
 import os
 import json
 import asyncio
+import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 import google.generativeai as genai
@@ -23,11 +24,13 @@ if not api_key:
 
 genai.configure(api_key=api_key)
 
+logger = logging.getLogger(__name__)
+
 class GiftService:
     def __init__(self):
         self.keyword_optimizer = KeywordOptimizer()
         self.model = genai.GenerativeModel('gemini-1.5-flash')
-        self.rate_limit_delay = float(os.getenv("GEMINI_RATE_LIMIT_DELAY", "3"))
+        self.rate_limit_delay = float(os.getenv("GEMINI_RATE_LIMIT_DELAY", "0"))
         
         # API rate limit management
         self.last_request_time = None
@@ -41,7 +44,8 @@ class GiftService:
         prompt = self._build_prompt(posts, username, additional_info)
         
         try:
-            await asyncio.sleep(self.rate_limit_delay)
+            if self.rate_limit_delay > 0:
+                await asyncio.sleep(self.rate_limit_delay)
             
             self.last_request_time = datetime.now()
             self.daily_request_count += 1
@@ -67,7 +71,7 @@ class GiftService:
                     self._add_search_links(result)
                     return result
                 except Exception as retry_error:
-                    print(f"Retry attempt failed for user '{username}': {str(retry_error)}")
+                    logger.warning("Retry attempt failed for user '%s': %s", username, retry_error)
             
             raise get_analysis_error_from_exception(e, username)
     
@@ -221,10 +225,7 @@ Reddit投稿データ:
         try:
             result = self.keyword_optimizer.optimize_keywords(gift_name, category)
             
-            if platform == "rakuten":
-                optimized = result["rakuten_keywords"]
-            else:
-                optimized = result["amazon_keywords"]
+            optimized = result.get(f"{platform}_keywords", result["amazon_keywords"])
             
             return optimized if optimized.strip() else gift_name
         except Exception:

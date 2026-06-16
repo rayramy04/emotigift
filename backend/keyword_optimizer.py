@@ -85,7 +85,7 @@ class KeywordOptimizer:
             category: ギフトのカテゴリ（任意）
             
         Returns:
-            Dict containing optimized keywords for Amazon and Rakuten
+            Dict containing optimized keywords for Amazon, Rakuten, and Yahoo
         """
         # 1. 一般化ルールを適用
         optimized = self._apply_generalization_rules(gift_name)
@@ -100,10 +100,12 @@ class KeywordOptimizer:
         # 4. 検索プラットフォーム別に最適化
         amazon_keywords = self._optimize_for_amazon(optimized)
         rakuten_keywords = self._optimize_for_rakuten(optimized)
+        yahoo_keywords = self._optimize_for_yahoo(optimized)
         
         return {
             "amazon_keywords": amazon_keywords,
             "rakuten_keywords": rakuten_keywords,
+            "yahoo_keywords": yahoo_keywords,
             "original": gift_name,
             "base_optimized": optimized
         }
@@ -166,6 +168,14 @@ class KeywordOptimizer:
         text = text.replace("デバイス", "機器")
         
         return text
+
+    def _optimize_for_yahoo(self, text: str) -> str:
+        """Yahoo!ショッピング検索用に最適化"""
+        text = text.replace("・", " ")
+        text = re.sub(r'[（）()【】\[\]]', ' ', text)
+        text = re.sub(r'\s+', ' ', text).strip()
+        text = text.replace("デバイス", "機器")
+        return text
     
     def suggest_alternative_keywords(self, gift_name: str) -> List[str]:
         """
@@ -192,4 +202,3 @@ class KeywordOptimizer:
                 break
         
         return list(set(alternatives))  # 重複除去
-

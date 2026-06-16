@@ -39,7 +39,7 @@ A combination of **Emotion** and **Gift** - embodying our vision of using AI to 
 | Category | Technology |
 |----------|------------|
 | **Frontend** | React 19.1.0 + TypeScript 4.9.5 |
-| **Backend** | FastAPI + Python 3.8+ |
+| **Backend** | FastAPI + Python 3.10+ |
 | **AI** | Google Gemini 1.5 Flash |
 | **Styling** | CSS + Tailwind CSS |
 
@@ -47,7 +47,7 @@ A combination of **Emotion** and **Gift** - embodying our vision of using AI to 
 
 ### Prerequisites
 - Node.js 18+ and npm 8+
-- Python 3.8+
+- Python 3.10+
 - Google Gemini API key ([Get it here](https://makersuite.google.com/app/apikey))
 
 ### Installation
