@@ -47,8 +47,21 @@ class RequestValidationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 422)
 
     def test_oversized_body_is_rejected_before_parsing(self):
-        with patch.object(main, "MAX_REQUEST_BODY_BYTES", 100):
-            response = self.client.post("/analyze-line", json={"chat_content": CHAT})
+        body = main.MAX_REQUEST_BODY_BYTES + 1
+        response = self.client.post(
+            "/analyze-line", content=b"x" * body, headers={"Content-Type": "application/json"}
+        )
+        self.assertEqual(response.status_code, 413)
+
+    def test_oversized_chunked_body_without_content_length_is_rejected(self):
+        def chunks():
+            for _ in range(main.MAX_REQUEST_BODY_BYTES // 100_000 + 2):
+                yield b"x" * 100_000
+
+        response = self.client.post(
+            "/analyze-line", content=chunks(), headers={"Content-Type": "application/json"}
+        )
+        self.assertNotIn("content-length", response.request.headers)
         self.assertEqual(response.status_code, 413)
 
     def test_additional_info_length_is_limited(self):

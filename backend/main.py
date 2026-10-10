@@ -4,6 +4,7 @@ EmotiGift API - Main Entry Point
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from starlette.datastructures import Headers
 from pydantic import BaseModel, Field
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -67,15 +68,46 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 
-@app.middleware("http")
-async def limit_request_body_size(request: Request, call_next):
-    content_length = request.headers.get("content-length")
-    if content_length and content_length.isdigit() and int(content_length) > MAX_REQUEST_BODY_BYTES:
-        return JSONResponse(
+class BodySizeLimitMiddleware:
+    """
+    Reject oversized request bodies, both up front via Content-Length and
+    while streaming (chunked uploads have no Content-Length to trust).
+    """
+
+    def __init__(self, app, max_bytes: int):
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        too_large = HTTPException(
             status_code=413,
-            content={"detail": "リクエストが大きすぎます。チャット履歴を短くして再度お試しください。"},
+            detail="リクエストが大きすぎます。チャット履歴を短くして再度お試しください。",
         )
-    return await call_next(request)
+
+        content_length = Headers(scope=scope).get("content-length")
+        if content_length and content_length.isdigit() and int(content_length) > self.max_bytes:
+            await JSONResponse(status_code=413, content={"detail": too_large.detail})(scope, receive, send)
+            return
+
+        received = 0
+
+        async def limited_receive():
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > self.max_bytes:
+                    raise too_large
+            return message
+
+        await self.app(scope, limited_receive, send)
+
+
+app.add_middleware(BodySizeLimitMiddleware, max_bytes=MAX_REQUEST_BODY_BYTES)
 
 
 environment = os.getenv("ENVIRONMENT", "").lower()
