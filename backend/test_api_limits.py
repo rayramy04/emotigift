@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 sys.path.insert(0, os.path.dirname(__file__))
 
+from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 import main
@@ -153,6 +154,17 @@ class GeminiCallTests(unittest.IsolatedAsyncioTestCase):
         service.model.generate_content_async = hang
         with self.assertRaises(asyncio.TimeoutError):
             await service._generate("hello")
+
+    async def test_gemini_timeout_is_reported_as_504(self):
+        service = self.make_service(GEMINI_REQUEST_TIMEOUT="0.05")
+
+        async def hang(_prompt):
+            await asyncio.sleep(5)
+
+        service.model.generate_content_async = hang
+        with self.assertRaises(HTTPException) as caught:
+            await service.generate_recommendations("posts", "someone", {})
+        self.assertEqual(caught.exception.status_code, 504)
 
     async def test_gemini_call_does_not_block_event_loop(self):
         service = self.make_service()
