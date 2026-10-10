@@ -6,6 +6,8 @@ import os
 import requests
 import asyncio
 import random
+import logging
+import time
 from typing import List, Dict, Optional
 from dotenv import load_dotenv
 from reddit_official_api import RedditOfficialAPI
@@ -15,6 +17,8 @@ from error_handlers import (
 )
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 class UnifiedRedditService:
     def __init__(self):
@@ -45,15 +49,19 @@ class UnifiedRedditService:
         except Exception as e:
             # OAuth失敗時のフォールバック
             if self.use_oauth:
-                print(f"OAuth failed for {username}: {e}, trying non-OAuth")
+                logger.warning("OAuth failed for %s: %s, trying non-OAuth", username, e)
                 return await self._fetch_without_oauth(username)
             raise
     
     async def _fetch_with_oauth(self, username: str) -> str:
         """OAuth方式でのデータ取得"""
-        user_data = self.reddit_api.fetch_user_data_combined(username, 
-                                                           post_limit=self.fetch_limit, 
-                                                           comment_limit=30)
+        # requests is blocking, so keep it off the event loop
+        user_data = await asyncio.to_thread(
+            self.reddit_api.fetch_user_data_combined,
+            username,
+            post_limit=self.fetch_limit,
+            comment_limit=30,
+        )
         posts = user_data.get('posts', [])
         comments = user_data.get('comments', [])
         
@@ -82,14 +90,16 @@ class UnifiedRedditService:
         
         for url in urls:
             try:
-                response = requests.get(url, headers=headers, timeout=12)
+                response = await asyncio.to_thread(
+                    requests.get, url, headers=headers, timeout=12
+                )
                 if response.status_code == 200:
                     data = response.json()
                     posts = data.get('data', {}).get('children', [])
                     if posts:
                         return self._process_posts_only(posts, username)
             except Exception as e:
-                print(f"Failed to fetch from {url}: {e}")
+                logger.warning("Failed to fetch from %s: %s", url, e)
                 continue
         
         raise RedditUserNotFoundError(username)
@@ -144,7 +154,6 @@ class UnifiedRedditService:
         quality_score = engagement_score + text_quality
         
         # 時系列重み
-        import time
         post_age_days = (time.time() - created_utc) / 86400
         recency_weight = max(0.3, 1 - (post_age_days / 365))
         final_score = quality_score * recency_weight
@@ -175,7 +184,6 @@ class UnifiedRedditService:
         quality_score = engagement_score + text_quality
         
         # 時系列重み
-        import time
         comment_age_days = (time.time() - created_utc) / 86400
         recency_weight = max(0.3, 1 - (comment_age_days / 365))
         final_score = quality_score * recency_weight

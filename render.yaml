@@ -8,7 +8,7 @@ services:
       - key: GEMINI_API_KEY
         sync: false
       - key: CORS_ORIGINS
-        value: "https://emotigift.vercel.app,https://localhost:3000,http://localhost:3000"
+        value: "https://emotigift.vercel.app"
       - key: ENVIRONMENT
         value: "production"
     rootDir: backend

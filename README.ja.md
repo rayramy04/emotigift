@@ -112,6 +112,13 @@ scripts\start-frontend.bat
 4. 予算と関係性を設定（任意）
 5. パーソナライズされたギフト推薦を取得
 
+## プライバシーとデータの扱い
+
+- アップロードしたチャット履歴やRedditの投稿は、推薦の生成のためにGoogle Gemini APIへ送信されます。Googleと共有したくない会話はアップロードしないでください。送信データにはGemini APIの利用規約が適用されます。
+- EmotiGiftのバックエンドは、アップロードされたチャットや分析結果を保存せず、その内容をログにも出力しません。
+- リクエストにはクライアント単位のレート制限とサイズ制限があります（`backend/.env.example` の `ANALYZE_RATE_LIMIT`、`MAX_CHAT_CONTENT_CHARS` を参照）。
+- Geminiの1日・1分あたりのカウンターはバックエンドのプロセスごとにメモリ上で管理され、再起動でリセットされます。複数インスタンス間では共有されません。
+
 ## 開発チーム
 
 ### Pepper ([GitHub: Pepper161](https://github.com/Pepper161))
