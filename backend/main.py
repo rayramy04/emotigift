@@ -49,11 +49,14 @@ def get_client_ip(request: Request) -> str:
     """
     Client IP used as the rate limit key.
 
-    Behind a reverse proxy (Render) the socket address is the proxy, so read
-    X-Forwarded-For. Entries are appended by each proxy, so only the ones
-    added by our own proxies can be trusted: count TRUSTED_PROXY_HOPS from the right.
+    Behind reverse proxies (Render sits behind Cloudflare) the socket address is
+    the last proxy, so read X-Forwarded-For. Each trusted proxy appends the address
+    it received the request from, and anything to the left of those entries is
+    client-supplied. With "client, cdn" and 2 trusted proxies (CDN + load balancer),
+    the client is the 2nd entry from the right. Set TRUSTED_PROXY_HOPS to the number
+    of proxies in front of the app; 0 ignores the header.
     """
-    hops = int(os.getenv("TRUSTED_PROXY_HOPS", "1"))
+    hops = int(os.getenv("TRUSTED_PROXY_HOPS", "2"))
     forwarded_for = request.headers.get("x-forwarded-for")
     if hops > 0 and forwarded_for:
         parts = [part.strip() for part in forwarded_for.split(",") if part.strip()]

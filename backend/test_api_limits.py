@@ -105,7 +105,7 @@ class RateLimitTests(unittest.TestCase):
             statuses = [
                 self.client.post(
                     "/analyze-line", json={"chat_content": CHAT},
-                    headers={"X-Forwarded-For": f"10.0.0.{i}, 198.51.100.7"},
+                    headers={"X-Forwarded-For": f"10.0.0.{i}, 198.51.100.7, 198.51.100.8"},
                 ).status_code
                 for i in range(6)
             ]
@@ -150,8 +150,15 @@ class ClientIpTests(unittest.TestCase):
     def test_uses_socket_address_without_header(self):
         self.assertEqual(main.get_client_ip(self.request()), "127.0.0.1")
 
-    def test_uses_entry_added_by_trusted_proxy(self):
-        self.assertEqual(main.get_client_ip(self.request("1.1.1.1, 2.2.2.2")), "2.2.2.2")
+    def test_uses_client_entry_for_cdn_plus_load_balancer_chain(self):
+        self.assertEqual(main.get_client_ip(self.request("1.1.1.1, 2.2.2.2")), "1.1.1.1")
+
+    def test_ignores_client_supplied_prefix(self):
+        self.assertEqual(main.get_client_ip(self.request("9.9.9.9, 1.1.1.1, 2.2.2.2")), "1.1.1.1")
+
+    def test_single_trusted_proxy_uses_last_entry(self):
+        with patch.dict(os.environ, {"TRUSTED_PROXY_HOPS": "1"}):
+            self.assertEqual(main.get_client_ip(self.request("9.9.9.9, 1.1.1.1")), "1.1.1.1")
 
     def test_hops_zero_ignores_header(self):
         with patch.dict(os.environ, {"TRUSTED_PROXY_HOPS": "0"}):
