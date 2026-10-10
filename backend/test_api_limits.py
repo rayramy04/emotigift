@@ -64,6 +64,12 @@ class RequestValidationTests(unittest.TestCase):
         self.assertNotIn("content-length", response.request.headers)
         self.assertEqual(response.status_code, 413)
 
+    def test_validation_errors_do_not_echo_submitted_content(self):
+        secret = "private-message-" + "x" * main.MAX_CHAT_CONTENT_CHARS
+        response = self.client.post("/analyze-line", json={"chat_content": secret})
+        self.assertEqual(response.status_code, 422)
+        self.assertNotIn("private-message", response.text)
+
     def test_additional_info_length_is_limited(self):
         response = self.client.post(
             "/analyze-line", json={"chat_content": CHAT, "additional_info": "x" * 1001}
