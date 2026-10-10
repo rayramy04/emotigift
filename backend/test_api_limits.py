@@ -101,9 +101,9 @@ class RateLimitTests(unittest.TestCase):
         with patch.object(main, "get_gift_service", fake_gift_service):
             for _ in range(5):
                 self.client.post("/analyze-line", json={"chat_content": CHAT},
-                                 headers={"X-Forwarded-For": "203.0.113.1"})
+                                 headers={"X-Forwarded-For": "203.0.113.1, 198.51.100.8"})
             other = self.client.post("/analyze-line", json={"chat_content": CHAT},
-                                     headers={"X-Forwarded-For": "203.0.113.2"})
+                                     headers={"X-Forwarded-For": "203.0.113.2, 198.51.100.8"})
         self.assertEqual(other.status_code, 200)
 
     def test_spoofed_forwarded_for_prefix_does_not_bypass_limit(self):
