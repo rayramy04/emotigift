@@ -30,8 +30,13 @@ class GiftService:
         self.keyword_optimizer = KeywordOptimizer()
         self.model = genai.GenerativeModel('gemini-1.5-flash')
         self.rate_limit_delay = float(os.getenv("GEMINI_RATE_LIMIT_DELAY", "0"))
+        self.request_timeout = float(os.getenv("GEMINI_REQUEST_TIMEOUT", "60"))
+        self.max_concurrent_requests = int(os.getenv("GEMINI_MAX_CONCURRENT", "3"))
+        self._concurrency = asyncio.Semaphore(self.max_concurrent_requests)
+        self._rate_lock = asyncio.Lock()
         
-        # API rate limit management
+        # API rate limit management (in-memory: per process, resets on restart.
+        # Per-client limits live in main.py; this only guards the shared Gemini quota)
         self.last_request_time = None
         self.daily_request_count = 0
         self.daily_reset_time = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
@@ -46,10 +51,7 @@ class GiftService:
             if self.rate_limit_delay > 0:
                 await asyncio.sleep(self.rate_limit_delay)
             
-            self.last_request_time = datetime.now()
-            self.daily_request_count += 1
-            
-            response = self.model.generate_content(prompt)
+            response = await self._generate(prompt)
             
             if not response or not hasattr(response, 'text'):
                 raise Exception("Invalid response from Gemini API")
@@ -65,7 +67,7 @@ class GiftService:
             if "429" in str(e) or "quota" in str(e).lower():
                 await asyncio.sleep(10)
                 try:
-                    response = self.model.generate_content(prompt)
+                    response = await self._generate(prompt)
                     result = self._process_response(response.text.strip(), username)
                     self._add_search_links(result)
                     return result
@@ -74,25 +76,37 @@ class GiftService:
             
             raise get_analysis_error_from_exception(e, username)
     
+    async def _generate(self, prompt: str):
+        """Call Gemini without blocking the event loop, with a timeout and bounded concurrency"""
+        async with self._concurrency:
+            return await asyncio.wait_for(
+                self.model.generate_content_async(prompt),
+                timeout=self.request_timeout,
+            )
+
     async def _check_rate_limits(self):
-        """Check API rate limits"""
-        now = datetime.now()
-        
-        if now >= self.daily_reset_time:
-            self.daily_request_count = 0
-            self.daily_reset_time = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
-        
-        # Daily limit check (1200 requests per day)
-        if self.daily_request_count >= 1200:
-            raise DailyLimitExceededError()
-        
-        # Rate limit check (13 requests per minute)
-        if self.last_request_time:
-            time_since_last = (now - self.last_request_time).total_seconds()
-            min_interval = 60 / 13  # ~4.6 second intervals
-            if time_since_last < min_interval:
-                wait_time = min_interval - time_since_last
-                await asyncio.sleep(wait_time)
+        """Check API rate limits and reserve a request slot"""
+        # The lock makes concurrent requests queue up instead of all passing the check at once
+        async with self._rate_lock:
+            now = datetime.now()
+            
+            if now >= self.daily_reset_time:
+                self.daily_request_count = 0
+                self.daily_reset_time = now.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+            
+            # Daily limit check (1200 requests per day)
+            if self.daily_request_count >= 1200:
+                raise DailyLimitExceededError()
+            
+            # Rate limit check (13 requests per minute)
+            if self.last_request_time:
+                time_since_last = (now - self.last_request_time).total_seconds()
+                min_interval = 60 / 13  # ~4.6 second intervals
+                if time_since_last < min_interval:
+                    await asyncio.sleep(min_interval - time_since_last)
+            
+            self.last_request_time = datetime.now()
+            self.daily_request_count += 1
     
     def _build_prompt(self, posts: str, username: str, additional_info: Dict = None) -> str:
         """Build prompt"""

@@ -1,9 +1,14 @@
 """
 EmotiGift API - Main Entry Point
 """
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from fastapi.responses import JSONResponse
+from starlette.datastructures import Headers
+from pydantic import BaseModel, Field
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
 from typing import Optional
 import os
 from dotenv import load_dotenv
@@ -18,39 +23,128 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
+MAX_CHAT_CONTENT_CHARS = int(os.getenv("MAX_CHAT_CONTENT_CHARS", "1000000"))
+# UTF-8 uses up to 4 bytes per character, plus JSON overhead for the other fields
+MAX_REQUEST_BODY_BYTES = int(os.getenv("MAX_REQUEST_BODY_BYTES", str(MAX_CHAT_CONTENT_CHARS * 4 + 10_000)))
+ANALYZE_RATE_LIMIT = os.getenv("ANALYZE_RATE_LIMIT", "5/minute;50/day")
+MAX_BUDGET_YEN = 10_000_000
+REDDIT_ID_PATTERN = r"^[A-Za-z0-9_-]{3,20}$"
+
+
 class ChatAnalysisRequest(BaseModel):
-    chat_content: str
-    min_budget: Optional[int] = None
-    max_budget: Optional[int] = None
-    relationship: Optional[str] = None
-    gender: Optional[str] = None
-    age: Optional[str] = None
-    occasion: Optional[str] = None
-    additional_info: Optional[str] = None
+    chat_content: str = Field(max_length=MAX_CHAT_CONTENT_CHARS)
+    min_budget: Optional[int] = Field(default=None, ge=0, le=MAX_BUDGET_YEN)
+    max_budget: Optional[int] = Field(default=None, ge=0, le=MAX_BUDGET_YEN)
+    relationship: Optional[str] = Field(default=None, max_length=100)
+    gender: Optional[str] = Field(default=None, max_length=100)
+    age: Optional[str] = Field(default=None, max_length=100)
+    occasion: Optional[str] = Field(default=None, max_length=100)
+    additional_info: Optional[str] = Field(default=None, max_length=1000)
 
 LineChatAnalysisRequest = ChatAnalysisRequest
 WhatsAppChatAnalysisRequest = ChatAnalysisRequest
 
+
+def get_client_ip(request: Request) -> str:
+    """
+    Client IP used as the rate limit key.
+
+    Behind reverse proxies (Render sits behind Cloudflare) the socket address is
+    the last proxy, so read X-Forwarded-For. Each trusted proxy appends the address
+    it received the request from, and anything to the left of those entries is
+    client-supplied. With "client, cdn" and 2 trusted proxies (CDN + load balancer),
+    the client is the 2nd entry from the right. Set TRUSTED_PROXY_HOPS to the number
+    of proxies in front of the app; 0 ignores the header.
+    """
+    hops = int(os.getenv("TRUSTED_PROXY_HOPS", "2"))
+    forwarded_for = request.headers.get("x-forwarded-for")
+    if hops > 0 and forwarded_for:
+        parts = [part.strip() for part in forwarded_for.split(",") if part.strip()]
+        # Fewer entries than trusted proxies means the leftmost one could be client-supplied
+        if len(parts) >= hops:
+            return parts[len(parts) - hops]
+    return request.client.host if request.client else "unknown"
+
+
+limiter = Limiter(key_func=get_client_ip)
+
 app = FastAPI()
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+
+@app.exception_handler(RequestValidationError)
+async def validation_error_handler(request: Request, exc: RequestValidationError):
+    """Default 422 bodies echo the rejected input, which would send private chat text back to the client"""
+    errors = [
+        {"loc": list(error.get("loc", [])), "msg": error.get("msg", ""), "type": error.get("type", "")}
+        for error in exc.errors()
+    ]
+    return JSONResponse(status_code=422, content={"detail": errors})
+
+
+class BodySizeLimitMiddleware:
+    """
+    Reject oversized request bodies, both up front via Content-Length and
+    while streaming (chunked uploads have no Content-Length to trust).
+    """
+
+    def __init__(self, app, max_bytes: int):
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        too_large = HTTPException(
+            status_code=413,
+            detail="リクエストが大きすぎます。チャット履歴を短くして再度お試しください。",
+        )
+
+        content_length = Headers(scope=scope).get("content-length")
+        if content_length and content_length.isdigit() and int(content_length) > self.max_bytes:
+            await JSONResponse(status_code=413, content={"detail": too_large.detail})(scope, receive, send)
+            return
+
+        received = 0
+
+        async def limited_receive():
+            nonlocal received
+            message = await receive()
+            if message["type"] == "http.request":
+                received += len(message.get("body", b""))
+                if received > self.max_bytes:
+                    raise too_large
+            return message
+
+        await self.app(scope, limited_receive, send)
+
+
+app.add_middleware(BodySizeLimitMiddleware, max_bytes=MAX_REQUEST_BODY_BYTES)
+
+
+environment = os.getenv("ENVIRONMENT", "").lower()
 allowed_origins = [
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
+    origin.strip()
+    for origin in os.getenv("CORS_ORIGINS", "").split(",")
+    if origin.strip()
 ]
+if environment != "production":
+    allowed_origins.extend(["http://localhost:3000", "http://127.0.0.1:3000"])
 
-env_origins = os.getenv("CORS_ORIGINS")
-if env_origins:
-    allowed_origins.extend(env_origins.split(","))
-
-if os.getenv("ENVIRONMENT") == "development":
+allow_any_origin = environment == "development"
+if allow_any_origin:
     allowed_origins = ["*"]
 
+# Credentials are never needed (no cookies/auth) and must not be combined with "*"
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "OPTIONS", "PUT", "DELETE"],
-    allow_headers=["*"],
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type"],
 )
 
 reddit_service = UnifiedRedditService()
@@ -65,7 +159,7 @@ def get_gift_service() -> GiftService:
 @app.get("/")
 async def root():
     """Root endpoint"""
-    return {"message": "EmotiGift API is running", "cors_origins": allowed_origins}
+    return {"message": "EmotiGift API is running"}
 
 @app.get("/health")
 async def health_check():
@@ -73,15 +167,17 @@ async def health_check():
     return {"status": "healthy", "timestamp": datetime.now().isoformat()}
 
 @app.get("/analyze")
+@limiter.limit(ANALYZE_RATE_LIMIT)
 async def analyze_reddit_user(
-    reddit_id: str,
-    min_budget: int = None,
-    max_budget: int = None,
-    relationship: str = None,
-    gender: str = None,
-    age: str = None,
-    occasion: str = None,
-    additional_info: str = None
+    request: Request,
+    reddit_id: str = Query(pattern=REDDIT_ID_PATTERN),
+    min_budget: Optional[int] = Query(default=None, ge=0, le=MAX_BUDGET_YEN),
+    max_budget: Optional[int] = Query(default=None, ge=0, le=MAX_BUDGET_YEN),
+    relationship: Optional[str] = Query(default=None, max_length=100),
+    gender: Optional[str] = Query(default=None, max_length=100),
+    age: Optional[str] = Query(default=None, max_length=100),
+    occasion: Optional[str] = Query(default=None, max_length=100),
+    additional_info: Optional[str] = Query(default=None, max_length=1000),
 ):
     """
     Analyze Reddit user and generate gift recommendations
@@ -99,9 +195,6 @@ async def analyze_reddit_user(
     Returns:
         User profile analysis and gift recommendations
     """
-    if not reddit_id:
-        raise HTTPException(status_code=400, detail="Reddit ID is required")
-    
     additional_info_dict = {
         "min_budget": min_budget,
         "max_budget": max_budget,
@@ -554,30 +647,34 @@ async def _analyze_chat(request: ChatAnalysisRequest, parser, platform: str):
         )
 
 @app.post("/analyze-line")
-async def analyze_line_chat(request: LineChatAnalysisRequest):
+@limiter.limit(ANALYZE_RATE_LIMIT)
+async def analyze_line_chat(request: Request, body: LineChatAnalysisRequest):
     """
     Analyze LINE chat history and generate gift recommendations
     
     Args:
-        request: LINE chat analysis request
+        request: Incoming HTTP request (used for rate limiting)
+        body: LINE chat analysis request
     
     Returns:
         User profile analysis and gift recommendations
     """
-    return await _analyze_chat(request, parse_line_chat, "LINE")
+    return await _analyze_chat(body, parse_line_chat, "LINE")
 
 @app.post("/analyze-whatsapp")
-async def analyze_whatsapp_chat(request: WhatsAppChatAnalysisRequest):
+@limiter.limit(ANALYZE_RATE_LIMIT)
+async def analyze_whatsapp_chat(request: Request, body: WhatsAppChatAnalysisRequest):
     """
     Analyze WhatsApp chat history and generate gift recommendations
     
     Args:
-        request: WhatsApp chat analysis request
+        request: Incoming HTTP request (used for rate limiting)
+        body: WhatsApp chat analysis request
     
     Returns:
         User profile analysis and gift recommendations
     """
-    return await _analyze_chat(request, parse_whatsapp_chat, "WhatsApp")
+    return await _analyze_chat(body, parse_whatsapp_chat, "WhatsApp")
 
 if __name__ == "__main__":
     import uvicorn

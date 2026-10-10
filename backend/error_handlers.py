@@ -1,6 +1,7 @@
 """
 エラーハンドリング関連のユーティリティ
 """
+import asyncio
 from fastapi import HTTPException
 
 class RedditUserNotFoundError(HTTPException):
@@ -83,7 +84,13 @@ def get_analysis_error_from_exception(e: Exception, username: str) -> HTTPExcept
     """例外から適切なエラーメッセージを生成"""
     error_message = str(e).lower()
     
-    if "429" in error_message or "quota" in error_message or "rate limit" in error_message:
+    # asyncio.TimeoutError has an empty message, so it must be matched by type
+    if isinstance(e, (asyncio.TimeoutError, TimeoutError)):
+        return HTTPException(
+            status_code=504,
+            detail="AI分析がタイムアウトしました。サーバーが混雑している可能性があります。しばらく時間をおいてから再度お試しください。"
+        )
+    elif "429" in error_message or "quota" in error_message or "rate limit" in error_message:
         return APIRateLimitError("AI分析の")
     elif "insufficient" in error_message or "not enough" in error_message:
         return RedditInsufficientDataError(username)

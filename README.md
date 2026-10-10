@@ -112,6 +112,13 @@ scripts\start-frontend.bat
 4. Set budget and relationship (optional)
 5. Get personalized gift recommendations
 
+## Privacy & Data Handling
+
+- Chat files and Reddit posts you submit are sent to the Google Gemini API to generate recommendations. Do not upload conversations you are not comfortable sharing with Google; Google's terms for the Gemini API apply to that data.
+- The EmotiGift backend does not store uploaded chats or analysis results, and does not write their contents to logs.
+- Requests are rate limited per client and uploads are size limited (see `ANALYZE_RATE_LIMIT`, `MAX_CHAT_CONTENT_CHARS` in `backend/.env.example`).
+- The Gemini daily/per-minute counters are kept in memory per backend process and reset on restart; they are not shared between instances.
+
 ## Development Team
 
 ### Pepper ([GitHub: Pepper161](https://github.com/Pepper161))

@@ -7,9 +7,12 @@ import requests
 import base64
 import time
 from typing import Dict, List
+from fastapi import HTTPException
 from dotenv import load_dotenv
 
 load_dotenv()
+
+REQUEST_TIMEOUT_SECONDS = 12
 
 class RedditOfficialAPI:
     def __init__(self):
@@ -40,7 +43,8 @@ class RedditOfficialAPI:
         response = requests.post(
             'https://www.reddit.com/api/v1/access_token',
             headers=headers,
-            data=data
+            data=data,
+            timeout=REQUEST_TIMEOUT_SECONDS
         )
         
         if response.status_code == 200:
@@ -67,7 +71,7 @@ class RedditOfficialAPI:
             'sort': 'new'
         }
         
-        response = requests.get(url, headers=headers, params=params)
+        response = requests.get(url, headers=headers, params=params, timeout=REQUEST_TIMEOUT_SECONDS)
         
         if response.status_code == 200:
             data = response.json()
@@ -92,7 +96,7 @@ class RedditOfficialAPI:
             'sort': 'new'
         }
         
-        response = requests.get(url, headers=headers, params=params)
+        response = requests.get(url, headers=headers, params=params, timeout=REQUEST_TIMEOUT_SECONDS)
         
         if response.status_code == 200:
             data = response.json()
