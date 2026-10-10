@@ -24,8 +24,8 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 MAX_CHAT_CONTENT_CHARS = int(os.getenv("MAX_CHAT_CONTENT_CHARS", "1000000"))
-# JSON overhead and multi-byte characters make the body larger than the text itself
-MAX_REQUEST_BODY_BYTES = int(os.getenv("MAX_REQUEST_BODY_BYTES", str(MAX_CHAT_CONTENT_CHARS * 3 + 10_000)))
+# UTF-8 uses up to 4 bytes per character, plus JSON overhead for the other fields
+MAX_REQUEST_BODY_BYTES = int(os.getenv("MAX_REQUEST_BODY_BYTES", str(MAX_CHAT_CONTENT_CHARS * 4 + 10_000)))
 ANALYZE_RATE_LIMIT = os.getenv("ANALYZE_RATE_LIMIT", "5/minute;50/day")
 MAX_BUDGET_YEN = 10_000_000
 REDDIT_ID_PATTERN = r"^[A-Za-z0-9_-]{3,20}$"
@@ -60,8 +60,9 @@ def get_client_ip(request: Request) -> str:
     forwarded_for = request.headers.get("x-forwarded-for")
     if hops > 0 and forwarded_for:
         parts = [part.strip() for part in forwarded_for.split(",") if part.strip()]
-        if parts:
-            return parts[max(len(parts) - hops, 0)]
+        # Fewer entries than trusted proxies means the leftmost one could be client-supplied
+        if len(parts) >= hops:
+            return parts[len(parts) - hops]
     return request.client.host if request.client else "unknown"
 
 

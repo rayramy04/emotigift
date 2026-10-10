@@ -46,6 +46,12 @@ class RequestValidationTests(unittest.TestCase):
         response = self.client.post("/analyze-line", json={"chat_content": "x" * (max_length + 1)})
         self.assertEqual(response.status_code, 422)
 
+    def test_four_byte_characters_within_char_limit_are_accepted(self):
+        with patch.object(main, "get_gift_service", fake_gift_service):
+            body = {"chat_content": CHAT + "\n" + "😀" * (main.MAX_CHAT_CONTENT_CHARS - len(CHAT) - 1)}
+            response = self.client.post("/analyze-line", json=body)
+        self.assertEqual(response.status_code, 200)
+
     def test_oversized_body_is_rejected_before_parsing(self):
         body = main.MAX_REQUEST_BODY_BYTES + 1
         response = self.client.post(
@@ -155,6 +161,9 @@ class ClientIpTests(unittest.TestCase):
 
     def test_ignores_client_supplied_prefix(self):
         self.assertEqual(main.get_client_ip(self.request("9.9.9.9, 1.1.1.1, 2.2.2.2")), "1.1.1.1")
+
+    def test_underpopulated_chain_falls_back_to_socket_address(self):
+        self.assertEqual(main.get_client_ip(self.request("6.6.6.6")), "127.0.0.1")
 
     def test_single_trusted_proxy_uses_last_entry(self):
         with patch.dict(os.environ, {"TRUSTED_PROXY_HOPS": "1"}):
